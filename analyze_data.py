@@ -146,7 +146,7 @@ def build_model():
     print(cm)
 
     f, ax = plt.subplots(figsize=[7,10])
-    
+
     xgboost.plot_importance(trained_estimator[0], max_num_features=50, ax=ax)
     plt.title("XGBOOST Feature Importance")
 
@@ -154,9 +154,6 @@ def build_model():
     sn.heatmap(cm)
 
     plt.show()
-
-
-
 
 if __name__ == '__main__':
     clean_csc_courses()
