@@ -1,4 +1,7 @@
 #!/usr/bin/env python
+import multiprocessing
+if __name__ == '__main__':
+    multiprocessing.set_start_method('forkserver')
 
 import re
 from itertools import product, chain
@@ -7,6 +10,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import seaborn as sn
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import nltk
@@ -14,12 +18,14 @@ from nltk.corpus import stopwords
 
 from sklearn_pandas import DataFrameMapper, gen_features
 import sklearn
-from sklearn.model_selection import train_test_split, cross_validate, cross_val_predict, LeaveOneOut
+from sklearn.model_selection import train_test_split, cross_validate, cross_val_predict, LeavePOut
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import f1_score, confusion_matrix, make_scorer
 from sklearn.ensemble import VotingClassifier
 
 import xgboost
+
+from joblib import dump, load
 
 from sklearn.exceptions import DataConversionWarning
 warnings.filterwarnings(action='ignore', category=DataConversionWarning)
@@ -62,7 +68,7 @@ def clean_software_desc():
 
 def generate_raw_train():
     soft_df = pd.read_csv('clean_soft_descs.csv')
-    course_df = pd.read_csv('clean_courses_labeled.csv')
+    course_df = pd.read_csv('three_categories_labeled_data.csv')
 
     soft_cols = [s+'_soft' for s in soft_df.columns]
     course_cols = [c+'_course' for c in course_df.columns]
@@ -77,10 +83,15 @@ def generate_raw_train():
     out_df['Label'] = (out_df['Name_soft'] == out_df['Label_course']).astype(int)
     out_df.drop(columns=['Name_soft', 'Label_course'], inplace=True)
     out_df.columns = ['soft_desc', 'course_name', 'course_desc', 'label']
+
     out_df.to_csv('raw_ml_construction.csv', index=0)
 
 def build_model():
-    data_df = pd.read_csv('raw_ml_construction.csv')
+    # data_df = pd.read_csv('raw_ml_construction.csv')
+
+    data_df = pd.read_csv('three_categories_labeled_data.csv')
+    data_df.columns = ['course_name', 'course_desc', 'label']
+    # quit()
 
     x_data_df = data_df.drop(columns='label')
     y_data_df = data_df[['label']]
@@ -92,15 +103,16 @@ def build_model():
 
     tf_idf_args = {
         'sublinear_tf': True,
-        'max_df': 0.5,
+        'max_df': 0.3,
         'norm': 'l2',
+        'min_df': 0.05
     }
 
     data_mapper = DataFrameMapper(
         [
-            ("soft_desc", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(2, 4), max_features=300)),
-            ("course_name", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(2, 2), max_features=50)),
-            ("course_desc", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(2, 4), max_features=300)),
+            # ("soft_desc", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(1, 4), max_features=300)),
+            ("course_name", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(1, 3), max_features=20)),
+            ("course_desc", sklearn.feature_extraction.text.TfidfVectorizer(**tf_idf_args, ngram_range=(2, 5), max_features=80)),
         ],
         df_out=True,
     )
@@ -119,15 +131,16 @@ def build_model():
         scale_pos_weight = 9
     )
 
-    f1 = make_scorer(f1_score)
+    # cv = LeavePOut(88)
+    f1 = make_scorer(f1_score, average='weighted')
     cv_scores = cross_validate(
         model,
         X_data,
         y_data,
         scoring=f1,
-        cv=3,
+        cv=5,
         return_train_score=False,
-        return_estimator=True,
+        # return_estimator=True,
         # fit_params=fit_params
     )
 
@@ -136,27 +149,22 @@ def build_model():
     print('Cross val scores: ', ['{:.3f}'.format(x) for x in test_cv_scores])
     print('Mean and Std: ', ['{:.3f}'.format(x) for x in test_cv_summary])
 
-    trained_estimator = cv_scores['estimator']
 
-    final_model = VotingClassifier(estimators=[(str(i), m) for i, m in enumerate(trained_estimator)], voting='hard')
-
-    y_pred = cross_val_predict(final_model, X_data, y_data, cv=3)
+    model.fit(X_data, y_data)
+    dump(model, 'model.joblib')
+    y_pred = cross_val_predict(model, X_data, y_data, cv=3)
     print('Confusion Matrix')
     cm = confusion_matrix(y_data, y_pred)
     print(cm)
-
-    f, ax = plt.subplots(figsize=[7,10])
-
-    xgboost.plot_importance(trained_estimator[0], max_num_features=50, ax=ax)
+    fig, ax = plt.subplots(figsize=(3, 10))
+    xgboost.plot_importance(model, max_num_features=10, ax=ax)
+    plt.gcf().subplots_adjust(left=0.30)
     plt.title("XGBOOST Feature Importance")
-
-    plt.figure(figsize = (10,7))
-    sn.heatmap(cm)
-
+    # sn.heatmap(cm)
     plt.show()
 
 if __name__ == '__main__':
-    clean_csc_courses()
-    clean_software_desc()
-    generate_raw_train()
+    # clean_csc_courses()
+    # clean_software_desc()
+    # generate_raw_train()
     build_model()
